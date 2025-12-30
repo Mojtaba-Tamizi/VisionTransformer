@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-
+from collections import OrderedDict
 
 class PatchEmbedding(nn.Module):    
     def __init__(self, img_size=32, patch_size=4, in_channels=3, embed_dim=256):
@@ -60,10 +60,10 @@ class VisionTransformer(nn.Module):
                  embed_dim=256, num_heads=8, num_layers=6, mlp_dim=512, dropout_rate=0.1):
         super(VisionTransformer, self).__init__()
         self.patch_embed = PatchEmbedding(img_size, patch_size, in_channels, embed_dim)
-        self.encoder = nn.Sequential([
-            TransformerEncoderLayer(embed_dim, num_heads, mlp_dim, dropout_rate)
-            for _ in range(num_layers)
-        ])
+        self.encoder = nn.Sequential(OrderedDict([
+            (f"layer_{i}", TransformerEncoderLayer(embed_dim, num_heads, mlp_dim, dropout_rate))
+            for i in range(num_layers)
+        ]))
         self.norm = nn.LayerNorm(embed_dim)
         self.head = nn.Linear(embed_dim, num_classes)
 

@@ -1,15 +1,16 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import torchvision
 from torchvision import datasets, transforms
 import numpy as np
 import random
-import matplotlib.pyplot as plt
 from model import VisionTransformer
 from tqdm.auto import tqdm
+from helper import plot_metrics, evaluate, train, predict_and_plot_grid, save_model, plot_confusion_matrix
+import json
+
 
 print("PyTorch version:", torch.__version__)
 print("Torchvision version:", torchvision.__version__)
@@ -26,7 +27,7 @@ random.seed(42)
 IMAGE_SIZE = 32
 IN_CHANNELS = 3
 BATCH_SIZE = 128
-EPOCHS = 10
+EPOCHS = 30
 LEARNING_RATE = 3e-4
 PATCH_SIZE = 4
 NUM_CLASSES = 10
@@ -34,12 +35,12 @@ EMBED_DIM = 256
 NUM_HEADS = 8
 NUM_LAYERS = 6
 MLP_DIM = 512
-DROPOUT_RATE = 0.1
+DROPOUT_RATE = 0.2
 
 
 transform = transforms.Compose([
     transforms.ToTensor(), 
-    transforms.Normalize((0.5,), (0.5,))])
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
 train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
 test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
@@ -59,52 +60,43 @@ model = VisionTransformer(IMAGE_SIZE, PATCH_SIZE, IN_CHANNELS, NUM_CLASSES,
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-
-def train(model, device, train_loader, criterion, optimizer):
-    model.train()
-    total_loss, correct = 0, 0
-
-    for x, y in train_loader:
-        x, y = x.to(device), y.to(device)
-        optimizer.zero_grad()
-        output = model(x)
-        loss = criterion(output, y)
-        loss.backward()
-        optimizer.step()
-
-        total_loss += loss.item() * x.size(0)
-        pred = output.argmax(dim=1, keepdim=True)
-        correct += pred.eq(y.view_as(pred)).sum().item()
-    return total_loss / len(train_loader.dataset), correct / len(train_loader.dataset)
-
-def evaluate(model, device, test_loader, criterion):
-    model.eval()
-    total_loss, correct = 0, 0
-
-    with torch.inference_mode():
-        for x, y in test_loader:
-            x, y = x.to(device), y.to(device)
-            output = model(x)
-            loss = criterion(output, y)
-
-            total_loss += loss.item() * x.size(0)
-            pred = output.argmax(dim=1, keepdim=True)
-            correct += pred.eq(y.view_as(pred)).sum().item()
-    return total_loss / len(test_loader.dataset), correct / len(test_loader.dataset)
-
-train_losses, train_accuracies = [], []
-test_losses, test_accuracies = [], []
-
-for epoch in tqdm(range(1, EPOCHS + 1), desc="Training Epochs"):
+logger = {
+    'train_loss': [],
+    'train_acc': [],
+    'train_precision': [],
+    'train_recall': [],
+    'train_f1': [],
+    'train_conf_mat': [],
+    'test_loss': [],
+    'test_acc': [],
+    'test_precision': [],
+    'test_recall': [],
+    'test_f1': [],
+    'test_conf_mat': []
+}
+for epoch in tqdm(range(1, EPOCHS + 1)):
     train_loss, train_acc = train(model, device, train_loader, criterion, optimizer)
-    test_loss, test_acc = evaluate(model, device, test_loader, criterion)
+    acc, prec, rec, f1, conf_mat, _, _ = evaluate(model, device, train_loader, NUM_CLASSES, criterion)
+    logger['train_loss'].append(float(train_loss))
+    logger['train_acc'].append(float(train_acc))
+    logger['train_precision'].append(float(prec))
+    logger['train_recall'].append(float(rec))
+    logger['train_f1'].append(float(f1))
+    logger['train_conf_mat'].append(conf_mat.tolist())
 
-    train_losses.append(train_loss)
-    train_accuracies.append(train_acc)
-    test_losses.append(test_loss)
-    test_accuracies.append(test_acc)
+    acc, prec, rec, f1, conf_mat, test_loss, test_acc = evaluate(model, device, test_loader, NUM_CLASSES, criterion)
+    logger['test_loss'].append(float(test_loss))
+    logger['test_acc'].append(float(test_acc))
+    logger['test_precision'].append(float(prec))
+    logger['test_recall'].append(float(rec))
+    logger['test_f1'].append(float(f1))
+    logger['test_conf_mat'].append(conf_mat.tolist())
+try:
+    with open('training_log.json', 'w') as outfile:
+        json.dump(logger, outfile, indent=4)
 
-    print(f'Epoch {epoch}: '
-          f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, '
-          f'Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}')
-    
+except: 
+    print("Could not save the training log.")
+
+plot_metrics(logger['train_loss'], logger['test_loss'], logger['train_acc'], logger['test_acc'])
+plot_confusion_matrix(np.array(logger['test_conf_mat'][-1]), class_names=train_dataset.classes)
